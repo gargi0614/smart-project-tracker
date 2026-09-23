@@ -6,6 +6,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+import ai_engine
+
 DB_PATH = "project_monitor.db"
 
 st.set_page_config(page_title="Project Monitor", layout="wide", page_icon="📊")
@@ -104,4 +106,231 @@ with title_col:
 with toggle_col:
     st.session_state.dark_mode = st.toggle("🌙 Dark", value=st.session_state.dark_mode)
 
-inject_th
+inject_theme(st.session_state.dark_mode)
+THEME = DARK if st.session_state.dark_mode else LIGHT
+
+auto = st.checkbox("Auto-refresh every 15s")
+
+tasks, members = load_tables()
+risk_scores, reallocations, assignments, forecast_row = load_ai_outputs()
+
+with st.container(border=True):
+    col1, col2, col3, col4 = st.columns(4)
+    total = len(tasks)
+    done = (tasks["status"] == "Done").sum()
+    blocked = (tasks["status"] == "Blocked").sum()
+    overdue = (pd.to_datetime(tasks["due_date"]).dt.date < date.today()).sum()
+    col1.metric("Total tasks", total)
+    col2.metric("Done", f"{done}/{total}")
+    col3.metric("Blocked", blocked)
+    col4.metric("Overdue", overdue)
+
+if not forecast_row.empty:
+    f = forecast_row.iloc[0]
+    with st.container(border=True):
+        if f["on_track"]:
+            st.success(
+                f"On track — predicted completion **{f['predicted_completion_date']}**, "
+                f"{f['days_ahead_or_behind']} day(s) before the {f['project_deadline']} deadline."
+            )
+        else:
+            st.error(
+                f"At risk — predicted completion **{f['predicted_completion_date']}**, "
+                f"{abs(f['days_ahead_or_behind'])} day(s) past the {f['project_deadline']} deadline."
+            )
+
+if st.button("🔄 Run AI analysis now"):
+    with st.spinner("Scoring risk, checking workload, ranking assignments..."):
+        ai_engine.main()
+    st.success("AI analysis updated below.")
+    st.rerun()
+
+with st.container(border=True):
+    st.subheader("Status breakdown")
+    STATUS_COLORS = {
+        "To Do": "#94a3b8", "In Progress": "#3b82f6", "In Review": "#f59e0b",
+        "Blocked": "#ef4444", "Done": "#22c55e",
+    }
+    status_df = tasks["status"].value_counts().reset_index()
+    status_df.columns = ["status", "count"]
+    status_chart = (
+        alt.Chart(status_df)
+        .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, size=40)
+        .encode(
+            x=alt.X("status:N", sort=None, title=None),
+            y=alt.Y("count:Q", title=None),
+            color=alt.Color("status:N",
+                             scale=alt.Scale(domain=list(STATUS_COLORS.keys()),
+                                              range=list(STATUS_COLORS.values())),
+                             legend=None),
+            tooltip=["status", "count"],
+        )
+        .configure_view(strokeWidth=0)
+        .configure_axis(grid=False, labelColor=THEME["text"], domainColor=THEME["border"])
+        .properties(height=260, background="transparent")
+    )
+    st.altair_chart(status_chart, use_container_width=True)
+
+with st.container(border=True):
+    st.subheader("Workload by team member")
+    members["utilization_pct"] = (
+        100 * members["current_allocated_hours"] / members["weekly_capacity_hours"]
+    ).round(0)
+
+    def workload_color(pct):
+        if pct > 100:
+            return "#ef4444"
+        if pct > 80:
+            return "#f59e0b"
+        return "#22c55e"
+
+    members["color"] = members["utilization_pct"].apply(workload_color)
+    workload_chart = (
+        alt.Chart(members)
+        .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, size=40)
+        .encode(
+            x=alt.X("name:N", sort=None, title=None),
+            y=alt.Y("utilization_pct:Q", title="Utilization %"),
+            color=alt.Color("color:N", scale=None, legend=None),
+            tooltip=["name", "utilization_pct"],
+        )
+        .configure_view(strokeWidth=0)
+        .configure_axis(grid=False, labelColor=THEME["text"], domainColor=THEME["border"],
+                         titleColor=THEME["text"])
+        .properties(height=260, background="transparent")
+    )
+    st.altair_chart(workload_chart, use_container_width=True)
+
+    overloaded = members[members["utilization_pct"] > 90]
+    for _, m in overloaded.iterrows():
+        st.warning(f"{m['name']} is at {int(m['utilization_pct'])}% capacity — consider reassigning a task.")
+
+    if not reallocations.empty:
+        st.markdown("**Reallocation suggestions**")
+        member_lookup = members.set_index("id")["name"].to_dict()
+        task_lookup = tasks.set_index("id")["title"].to_dict()
+        for _, r in reallocations.iterrows():
+            task_title = task_lookup.get(r["task_id"], f"#{r['task_id']}")
+            st.info(f"Move **{task_title}** — {r['reason']}")
+
+with st.container(border=True):
+    st.subheader("Tasks")
+
+    def risk_band(score):
+        if pd.isna(score):
+            return ""
+        if score >= 60:
+            return "High"
+        if score >= 30:
+            return "Medium"
+        return "Low"
+
+    display = tasks.merge(risk_scores[["task_id", "score"]], left_on="id", right_on="task_id", how="left")
+    display["risk"] = display["score"].apply(risk_band)
+
+    def highlight_row(row):
+        if row["status"] == "Blocked":
+            color = "background-color: #fee2e2"
+        elif row["status"] == "Done":
+            color = "background-color: #dcfce7"
+        elif row["risk"] == "High":
+            color = "background-color: #ffedd5"
+        elif row["risk"] == "Medium":
+            color = "background-color: #fef9c3"
+        else:
+            color = ""
+        return [color] * len(row)
+
+    member_lookup = members.set_index("id")["name"].to_dict()
+    display["assignee"] = display["assignee_id"].map(member_lookup)
+    cols = ["id", "title", "assignee", "status", "risk", "due_date", "estimated_hours",
+            "logged_hours", "required_skills", "comment_text"]
+    st.dataframe(display[cols].style.apply(highlight_row, axis=1), use_container_width=True)
+
+with st.container(border=True):
+    st.subheader("Who can take this?")
+    active_tasks = tasks[tasks["status"] != "Done"]
+    if active_tasks.empty or assignments.empty:
+        st.caption("No active tasks or no assignment suggestions yet — click 'Run AI analysis now' above.")
+    else:
+        chosen_task_id = st.selectbox(
+            "Select a task to see ranked candidates",
+            active_tasks["id"].tolist(),
+            format_func=lambda i: f"#{i} {active_tasks.loc[active_tasks.id == i, 'title'].values[0]}",
+        )
+        member_lookup = members.set_index("id")["name"].to_dict()
+        candidates = assignments[assignments["task_id"] == chosen_task_id].sort_values(
+            "match_score", ascending=False
+        )
+        if candidates.empty:
+            st.caption("No suggestions for this task yet — click 'Run AI analysis now' above after adding it.")
+        else:
+            candidates_display = candidates.copy()
+            candidates_display["candidate"] = candidates_display["candidate_member_id"].map(member_lookup)
+            st.dataframe(
+                candidates_display[["candidate", "match_score", "reason"]].reset_index(drop=True),
+                use_container_width=True,
+            )
+
+with st.container(border=True):
+    st.subheader("Create or update a task")
+
+    with st.form("task_form", clear_on_submit=True):
+        mode = st.radio("Mode", ["Create new", "Update existing"], horizontal=True)
+        task_id = None
+        if mode == "Update existing":
+            task_id = st.selectbox("Task", tasks["id"].tolist(),
+                                    format_func=lambda i: f"#{i} {tasks.loc[tasks.id == i, 'title'].values[0]}")
+
+        title = st.text_input("Title")
+        assignee_name = st.selectbox("Assignee", members["name"].tolist())
+        estimated_hours = st.number_input("Estimated hours", min_value=0.0, value=4.0, step=0.5)
+        logged_hours = st.number_input("Logged hours", min_value=0.0, value=0.0, step=0.5)
+        due = st.date_input("Due date")
+        status = st.selectbox("Status", ["To Do", "In Progress", "In Review", "Blocked", "Done"])
+        required_skills = st.text_input("Required skills (comma-separated)")
+        dependency_id = st.selectbox("Depends on (optional)", [None] + tasks["id"].tolist())
+        comment = st.text_area("Comment")
+
+        submitted = st.form_submit_button("Save task")
+
+        if submitted:
+            if not title.strip():
+                st.error("Title is required.")
+            else:
+                assignee_id = int(members.loc[members.name == assignee_name, "id"].values[0])
+                dep_str = str(dependency_id) if dependency_id else ""
+                conn = get_conn()
+                cur = conn.cursor()
+                if mode == "Create new":
+                    new_id = int(tasks["id"].max()) + 1 if len(tasks) else 1
+                    cur.execute(
+                        "INSERT INTO tasks (id, project_id, title, assignee_id, estimated_hours, "
+                        "logged_hours, due_date, dependency_ids, status, comment_text, required_skills) "
+                        "VALUES (?,1,?,?,?,?,?,?,?,?,?)",
+                        (new_id, title, assignee_id, estimated_hours, logged_hours,
+                         str(due), dep_str, status, comment, required_skills),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE tasks SET title=?, assignee_id=?, estimated_hours=?, logged_hours=?, "
+                        "due_date=?, dependency_ids=?, status=?, comment_text=?, required_skills=? "
+                        "WHERE id=?",
+                        (title, assignee_id, estimated_hours, logged_hours,
+                         str(due), dep_str, status, comment, required_skills, task_id),
+                    )
+                cur.execute("""
+                    UPDATE team_members
+                    SET current_allocated_hours = (
+                        SELECT COALESCE(SUM(estimated_hours), 0) FROM tasks
+                        WHERE tasks.assignee_id = team_members.id AND tasks.status != 'Done'
+                    )
+                """)
+                conn.commit()
+                conn.close()
+                st.success("Saved. Click 'Run AI analysis now' above to refresh risk/assignment suggestions.")
+                st.rerun()
+
+if auto:
+    time.sleep(15)
+    st.rerun()
