@@ -1,0 +1,199 @@
+\documentclass[10pt, a4paper]{beamer}
+
+% ---------- Packages ----------
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{colortbl}
+\usepackage{tikz}
+\usetikzlibrary{mindmap,calc,shapes,arrows,shapes.geometric,decorations.markings,patterns,decorations.pathmorphing}
+
+% ---------- Template setup ----------
+\mode<presentation>
+\setbeamertemplate{headline}%
+{%
+	\begin{beamercolorbox}[rounded=true, center, wd=\paperwidth]{bgcolor}%
+		\begin{columns}[T]%
+			\begin{column}{9cm}%
+				\vspace{2pt}%
+				{\color{gray}\tiny Hochschule Emden/Leer} \\%
+				{\color{gray}\tiny Abteilung Maschinenbau} \\%
+				{\color{gray}\tiny MSR-Labor}%
+			\end{column}%
+			\begin{column}{2cm}%
+				\includegraphics[scale=0.25]{technik.jpg}%
+			\end{column}%
+		\end{columns}%
+	\end{beamercolorbox}%
+	\vspace{10pt}%
+}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{sidebar right}{}
+\setbeamertemplate{sidebar left}{}
+
+\usetheme{default}
+\useinnertheme[shadow=true]{rounded}
+\usebackgroundtemplate
+{%
+	\rule{0pt}{\paperheight}%
+	\hspace*{\paperwidth}%
+	\makebox[0pt][r]{\includegraphics[width=\paperwidth]{hintergrund2.png}}%
+}
+
+\definecolor{HSELhellblau}{RGB}{138,198,203}
+\definecolor{HSELblau}{RGB}{0,59,95}
+\usecolortheme[named=HSELblau]{structure}
+
+\setbeamertemplate{section}[numbered]
+
+\newcommand{\STANDARD}[2]
+{
+	\mode<presentation>%
+	{%
+		\begin{frame}[allowframebreaks]{#1} #2 \end{frame}
+	}%
+}
+
+% ---------- Metadata ----------
+\title{AI-Powered Project Monitoring Tool}
+\subtitle{Real-Time Tracking with Predictive Risk and Workload Insights}
+\author{Rushikesh}
+\date{\today}
+
+\setbeamertemplate{footline}{%
+	\vspace*{-.1cm}\hspace*{.5cm}
+	\scriptsize{\hspace{325pt}\insertframenumber/\inserttotalframenumber}
+}
+
+\begin{document}
+	
+	\setbeamercolor{bgcolor}{fg=black,bg=white}
+	
+	% ---- 1: Title ----
+	\STANDARD{}{\titlepage}
+	
+	% ---- 2: Table of contents ----
+	\section{Introduction}
+	\section{Proposed Approach}
+	\section{Implementation}
+	\section{Current Progress}
+	\section{Differentiation}
+	\section{Conclusion}
+	\section{Future Scope}
+	\STANDARD{}{\tableofcontents[hideallsubsections]}
+	\setbeamercovered{transparent}
+	
+	% ================= CONTENT =================
+	
+	% ---- 3 ----
+	\STANDARD{The Problem}
+	{
+		\framesubtitle{Why Current Tools Fall Short}
+		\begin{itemize}
+			\item Status updates in tools like Jira lag reality until someone manually flags an issue
+			\item Predictive AI features (risk scoring, workload balancing) are usually gated behind expensive enterprise tiers
+			\item Task assignment is still mostly manual guesswork, not based on skill fit or current load
+			\item Small teams and students cannot justify enterprise PPM pricing just for predictive insight
+		\end{itemize}
+	}
+	
+	% ---- 4 ----
+	\STANDARD{Why This Matters}
+	{
+		\framesubtitle{Motivation}
+		\begin{itemize}
+			\item Catching risk early (before a status field is updated) prevents last-minute delays
+			\item Reallocating work based on real utilization avoids burnout and idle capacity
+			\item An accessible, AI-driven tool fills a real gap below the enterprise price point
+			\item Building this end-to-end pipeline demonstrates practical AI/data science skills, not just model training
+		\end{itemize}
+	}
+	
+	% ---- 5 ----
+	\STANDARD{System Architecture}
+	{
+		\framesubtitle{How the Pieces Fit Together}
+		\begin{itemize}
+			\item Data layer: SQLite database storing projects, tasks, and team members
+			\item AI engine: risk scoring, workload utilization, and skill-based matching, computed directly from the data
+			\item Dashboard: Streamlit app reading and writing the same database in real time
+			\item No separate API layer for this build --- the dashboard talks to the database directly, keeping the system simple to build and debug
+		\end{itemize}
+	}
+	
+	% ---- 6 ----
+	\STANDARD{Core Features}
+	{
+		\framesubtitle{What the Tool Does}
+		\begin{itemize}
+			\item Real-time dashboards: status breakdown, workload chart, and task table
+			\item AI-driven task analytics: a risk score per task, predicting the likelihood of delay
+			\item AI-driven workload management: utilization tracking with reallocation suggestions
+			\item Skill-based task assignment: ranks team members by skill fit and current load
+			\item Jira-style manual entry form: lets a user add or edit tasks live and see the AI react instantly
+		\end{itemize}
+	}
+	
+	% ---- 7 ----
+	\STANDARD{Technology Stack}
+	{
+		\framesubtitle{Tools Used}
+		\begin{itemize}
+			\item Python for all application and data logic
+			\item SQLite as the single source of truth for all data
+			\item Streamlit for the live dashboard and manual entry UI
+			\item pandas for data handling, scikit-learn for the risk-prediction model
+		\end{itemize}
+	}
+	
+	% ---- 8 ----
+	\STANDARD{Current Progress}
+	{
+		\framesubtitle{What's Working Today}
+		\begin{itemize}
+			\item Database schema and synthetic dataset generated, including team skills and task requirements
+			\item Live dashboard running: status breakdown, workload chart, and color-coded task table
+			\item Manual entry form working end to end --- new or updated tasks appear immediately
+			\item Next: risk-scoring model, reallocation engine, and skill-based assignment ranking
+		\end{itemize}
+	}
+	
+	% ---- 9 ----
+	\STANDARD{Why This Is Different}
+	{
+		\framesubtitle{Compared to Jira, Asana, and Similar Tools}
+		\begin{itemize}
+			\item Most existing AI features only read structured fields (dates, \% complete), not free-text updates
+			\item Predictive risk and workload balancing are usually locked behind enterprise pricing
+			\item Most tools only show that someone is overloaded --- this tool suggests a concrete fix
+			\item Task assignment becomes a ranked, data-backed decision instead of a guess
+		\end{itemize}
+	}
+	
+	% ---- 10 ----
+	\STANDARD{Summary}
+	{
+		\framesubtitle{Key Takeaways}
+		\begin{itemize}
+			\item Project monitoring tools exist, but predictive AI and skill-based assignment remain enterprise-only
+			\item This build proves that gap can be closed with a lean, two-day pipeline
+			\item The result is a practical demonstration of end-to-end AI system design, not just a trained model
+		\end{itemize}
+	}
+	
+	% ---- 11: Future Scope (last slide) ----
+	\STANDARD{Future Scope}
+	{
+		\framesubtitle{Beyond This Build}
+		\begin{itemize}
+			\item Integrate with real Jira/Asana/GitHub data instead of synthetic input
+			\item Add explainability to the risk score so users see why a task was flagged
+			\item Richer resourcing: skill taxonomies, leave calendars, multi-project contention
+			
+		\end{itemize}
+	}
+	
+\end{document}

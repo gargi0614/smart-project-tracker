@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated database (regenerate with: python generate_data.py)
+# Comment this line out if you'd rather commit a known-good demo dataset.
+project_monitor.db
+
+# LaTeX build artifacts (keep the .tex source and the final .pdf)
+report/*.aux
+report/*.log
+report/*.nav
+report/*.out
+report/*.snm
+report/*.toc
+report/*.synctex.gz
+report/*.fdb_latexmk
+report/*.fls
+
+# OS junk
+.DS_Store
+Thumbs.db
