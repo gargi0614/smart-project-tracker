@@ -1,12 +1,14 @@
+import math
 import sqlite3
 import time
-from datetime import date
+from datetime import date, timedelta
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
 import ai_engine
+from generate_data import SKILLS_POOL
 
 DB_PATH = "project_monitor.db"
 
@@ -78,6 +80,13 @@ def load_tables():
     return tasks, members
 
 
+def load_project():
+    conn = get_conn()
+    project = pd.read_sql("SELECT * FROM projects LIMIT 1", conn).iloc[0]
+    conn.close()
+    return project
+
+
 def load_ai_outputs():
     conn = get_conn()
     try:
@@ -112,18 +121,22 @@ THEME = DARK if st.session_state.dark_mode else LIGHT
 auto = st.checkbox("Auto-refresh every 15s")
 
 tasks, members = load_tables()
+project = load_project()
 risk_scores, reallocations, assignments, forecast_row = load_ai_outputs()
 
 with st.container(border=True):
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     total = len(tasks)
     done = (tasks["status"] == "Done").sum()
     blocked = (tasks["status"] == "Blocked").sum()
     overdue = (pd.to_datetime(tasks["due_date"]).dt.date < date.today()).sum()
+    days_to_deadline = (pd.to_datetime(project["deadline"]).date() - date.today()).days
     col1.metric("Total tasks", total)
     col2.metric("Done", f"{done}/{total}")
     col3.metric("Blocked", blocked)
     col4.metric("Overdue", overdue)
+    col5.metric("Project deadline", project["deadline"], delta=f"{days_to_deadline} days left",
+                delta_color="off")
 
 if not forecast_row.empty:
     f = forecast_row.iloc[0]
@@ -228,6 +241,22 @@ with st.container(border=True):
     display = tasks.merge(risk_scores[["task_id", "score"]], left_on="id", right_on="task_id", how="left")
     display["risk"] = display["score"].apply(risk_band)
 
+    capacity_lookup = members.set_index("id")["weekly_capacity_hours"].to_dict()
+
+    def estimate_resolution(row):
+        if row["status"] == "Done":
+            return "Completed"
+        if row["status"] == "Blocked":
+            return "Unknown — blocked"
+        remaining = max(row["estimated_hours"] - row["logged_hours"], 0)
+        daily_capacity = capacity_lookup.get(row["assignee_id"], 0) / 5
+        if daily_capacity <= 0 or remaining <= 0:
+            return "Unknown"
+        days_needed = math.ceil(remaining / daily_capacity)
+        return str(date.today() + timedelta(days=days_needed))
+
+    display["est_resolution"] = display.apply(estimate_resolution, axis=1)
+
     def highlight_row(row):
         if row["status"] == "Blocked":
             color = "background-color: #fee2e2"
@@ -243,15 +272,21 @@ with st.container(border=True):
 
     member_lookup = members.set_index("id")["name"].to_dict()
     display["assignee"] = display["assignee_id"].map(member_lookup)
-    cols = ["id", "title", "assignee", "status", "risk", "due_date", "estimated_hours",
-            "logged_hours", "required_skills", "comment_text"]
+    display = display.rename(columns={"due_date": "deadline"})
+    cols = ["id", "title", "assignee", "status", "risk", "deadline", "est_resolution",
+            "estimated_hours", "logged_hours", "required_skills", "comment_text"]
+    st.caption(
+        "**deadline** = this task's own due date. **est_resolution** = projected finish date "
+        "based on remaining hours and the assignee's daily capacity (not computable for Blocked "
+        "tasks, since that depends on an external blocker, not more hours)."
+    )
     st.dataframe(display[cols].style.apply(highlight_row, axis=1), use_container_width=True)
 
 with st.container(border=True):
     st.subheader("Who can take this?")
     active_tasks = tasks[tasks["status"] != "Done"]
     if active_tasks.empty or assignments.empty:
-        st.caption("No active tasks or no assignment suggestions yet — click 'Run AI analysis now' above.")
+        st.caption("No active tasks or no assignment suggestions yet — run ai_engine.py first.")
     else:
         chosen_task_id = st.selectbox(
             "Select a task to see ranked candidates",
@@ -263,7 +298,7 @@ with st.container(border=True):
             "match_score", ascending=False
         )
         if candidates.empty:
-            st.caption("No suggestions for this task yet — click 'Run AI analysis now' above after adding it.")
+            st.caption("No suggestions for this task yet — run ai_engine.py after adding it.")
         else:
             candidates_display = candidates.copy()
             candidates_display["candidate"] = candidates_display["candidate_member_id"].map(member_lookup)
@@ -272,6 +307,36 @@ with st.container(border=True):
                 use_container_width=True,
             )
 
+# ---------- Add team member ----------
+with st.container(border=True):
+    st.subheader("Add team member")
+    with st.form("member_form", clear_on_submit=True):
+        member_name = st.text_input("Name", key="member_name")
+        member_capacity = st.number_input("Weekly capacity hours", min_value=0.0, value=40.0, step=5.0)
+        member_skills = st.multiselect("Skills", SKILLS_POOL, key="member_skills")
+
+        member_submitted = st.form_submit_button("Add member")
+
+        if member_submitted:
+            if not member_name.strip():
+                st.error("Name is required.")
+            elif not member_skills:
+                st.error("Select at least one skill.")
+            else:
+                conn = get_conn()
+                cur = conn.cursor()
+                new_member_id = int(members["id"].max()) + 1 if len(members) else 1
+                cur.execute(
+                    "INSERT INTO team_members (id, name, weekly_capacity_hours, current_allocated_hours, skills) "
+                    "VALUES (?,?,?,?,?)",
+                    (new_member_id, member_name.strip(), member_capacity, 0, ",".join(member_skills)),
+                )
+                conn.commit()
+                conn.close()
+                st.success(f"Added {member_name.strip()}. They'll appear in Workload and the Assignee dropdown below.")
+                st.rerun()
+
+# ---------- Create / update task (Jira-style manual entry) ----------
 with st.container(border=True):
     st.subheader("Create or update a task")
 
@@ -328,7 +393,7 @@ with st.container(border=True):
                 """)
                 conn.commit()
                 conn.close()
-                st.success("Saved. Click 'Run AI analysis now' above to refresh risk/assignment suggestions.")
+                st.success("Saved. Run ai_engine.py again to refresh risk/assignment suggestions for this change.")
                 st.rerun()
 
 if auto:
